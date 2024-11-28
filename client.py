@@ -160,10 +160,12 @@ class ChatClient:
         # File share button (will be enabled/disabled based on role)
         self.file_share_button = ttk.Button(bottom_frame, text="Share File", command=self.share_file)
         self.file_share_button.pack(padx=5, pady=10, side=tk.LEFT)
-
         self.file_share_button.config(state='disabled')  # Disabled until role is known
 
         self.moderation_menu = tk.Menu(self.root, tearoff=0)
+
+        # Admin menu placeholder
+        self.admin_menu = None
 
     def authenticate(self):
         # Ask the user to choose between login or register
@@ -220,10 +222,22 @@ class ChatClient:
             self.file_share_button.config(state='normal')
             # Add moderation tools
             self.user_listbox.bind('<Button-3>', self.show_moderation_menu)
+            # Enable 'Create Channel' button
+            self.create_channel_button.config(state='normal')
         else:
             # Disable file sharing button
             self.file_share_button.config(state='disabled')
             self.user_listbox.unbind('<Button-3>')
+            # Disable 'Create Channel' button
+            self.create_channel_button.config(state='disabled')
+
+        if self.role == 'admin':
+            # Add admin options
+            menubar = self.root.nametowidget(self.root.winfo_children()[0].winfo_name())
+            admin_menu = tk.Menu(menubar, tearoff=0)
+            menubar.add_cascade(label='Admin', menu=admin_menu)
+            admin_menu.add_command(label='List All Users', command=self.list_all_users)
+            self.admin_menu = admin_menu
 
     def receive_messages(self):
         while True:
@@ -268,6 +282,9 @@ class ChatClient:
                     elif data_type == 'cl':  # Channel List
                         msg_data = json.loads(data.decode('utf-8'))
                         self.root.after(0, self.update_channel_list, msg_data['channels'])
+                    elif data_type == 'lu':  # List Users
+                        msg_data = json.loads(data.decode('utf-8'))
+                        self.root.after(0, self.show_user_list_dialog, msg_data['users'])
                     else:
                         pass  # Handle other data types
                 else:
@@ -461,6 +478,8 @@ class ChatClient:
             self.moderation_menu.delete(0, tk.END)
             self.moderation_menu.add_command(label="Mute User", command=lambda: self.mute_user(selected_user))
             self.moderation_menu.add_command(label="Unmute User", command=lambda: self.unmute_user(selected_user))
+            if self.role == 'admin' and selected_user != self.username:
+                self.moderation_menu.add_command(label="Remove User", command=lambda: self.remove_user(selected_user))
             self.moderation_menu.tk_popup(event.x_root, event.y_root)
 
     def mute_user(self, target_user):
@@ -468,6 +487,11 @@ class ChatClient:
 
     def unmute_user(self, target_user):
         self.send_command('unmute', {'target': target_user})
+
+    def remove_user(self, target_user):
+        confirmation = messagebox.askyesno("Confirm Removal", f"Are you sure you want to remove '{target_user}'?")
+        if confirmation:
+            self.send_command('remove_user', {'target': target_user})
 
     def send_command(self, command, args=None):
         msg_data = {'command': command, 'args': args or {}}
@@ -504,5 +528,28 @@ class ChatClient:
             self.chat_box.config(state='disabled')
             self.send_command('join_channel', {'channel_name': 'General'})
 
+    def list_all_users(self):
+        self.send_command('list_users')
+
+    def show_user_list_dialog(self, users):
+        user_list_window = tk.Toplevel(self.root)
+        user_list_window.title("All Registered Users")
+        user_list_window.geometry("300x400")
+        user_listbox = tk.Listbox(user_list_window)
+        user_listbox.pack(fill=tk.BOTH, expand=True)
+        for user_info in users:
+            user = user_info['username']
+            role = user_info['role']
+            user_listbox.insert(tk.END, f"{user} ({role})")
+        # Optionally, add functionality to remove users from here
+        user_listbox.bind('<Double-1>', lambda event: self.prompt_remove_user(user_listbox))
+
+    def prompt_remove_user(self, user_listbox):
+        selection = user_listbox.curselection()
+        if selection:
+            selected = user_listbox.get(selection[0])
+            username = selected.split(' ')[0]
+            self.remove_user(username)
+
 if __name__ == "__main__":
-    client = ChatClient('IP Address daalo', 5555)
+    client = ChatClient('192.168.1.100', 5555)  # Replace '127.0.0.1' with your server IP address
