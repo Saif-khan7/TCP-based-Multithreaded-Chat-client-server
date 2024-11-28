@@ -288,15 +288,76 @@ def handle_command(msg_data, sender):
         else:
             send_system_message("You do not have permission to send announcements.", recipient=sender)
     elif command == 'create_channel':
-        channel_name = args.get('channel_name')
-        create_channel(channel_name, sender)
+        if user_role in ['teacher', 'admin']:
+            channel_name = args.get('channel_name')
+            create_channel(channel_name, sender)
+        else:
+            send_system_message("You do not have permission to create channels.", recipient=sender)
     elif command == 'join_channel':
         channel_name = args.get('channel_name')
         join_channel(channel_name, sender)
     elif command == 'leave_channel':
         leave_channel(sender)
+    elif command == 'list_users':
+        if user_role == 'admin':
+            list_all_users(sender)
+        else:
+            send_system_message("You do not have permission to list users.", recipient=sender)
+    elif command == 'remove_user':
+        if user_role == 'admin':
+            target_user = args.get('target')
+            remove_user(sender, target_user)
+        else:
+            send_system_message("You do not have permission to remove users.", recipient=sender)
     else:
         send_system_message("Unknown command.", recipient=sender)
+
+def list_all_users(requester):
+    try:
+        conn = sqlite3.connect('users.db')
+        c = conn.cursor()
+        c.execute('SELECT username, role FROM users')
+        users = c.fetchall()
+        conn.close()
+        user_list = [{'username': u[0], 'role': u[1]} for u in users]
+        msg_data = {'users': user_list}
+        send_data(clients[requester]['socket'], 'lu', json.dumps(msg_data))  # 'lu' for List Users
+    except Exception as e:
+        print(f"Error listing users: {e}")
+        send_system_message("Failed to retrieve user list.", recipient=requester)
+
+def remove_user(requester, target_user):
+    if not target_user:
+        send_system_message("No user specified to remove.", recipient=requester)
+        return
+
+    if target_user == requester:
+        send_system_message("You cannot remove yourself.", recipient=requester)
+        return
+
+    try:
+        conn = sqlite3.connect('users.db')
+        c = conn.cursor()
+        c.execute('DELETE FROM users WHERE username = ?', (target_user,))
+        conn.commit()
+        conn.close()
+
+        # Disconnect the user if they are online
+        with clients_lock:
+            if target_user in clients:
+                target_socket = clients[target_user]['socket']
+                send_system_message("You have been removed by the admin.", recipient=target_user)
+                target_socket.close()
+                del clients[target_user]
+                # Remove from channels
+                with channels_lock:
+                    for channel_users in channels.values():
+                        channel_users.discard(target_user)
+        send_system_message(f"User '{target_user}' has been removed.", recipient=requester)
+        broadcast_user_list()
+    except Exception as e:
+        print(f"Error removing user: {e}")
+        send_system_message("Failed to remove user.", recipient=requester)
 
 def create_channel(channel_name, sender):
     if not channel_name:
